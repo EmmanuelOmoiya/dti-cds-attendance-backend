@@ -1,0 +1,72 @@
+# Local development stack.
+#   docker compose up -d postgres redis postgres-test   → infrastructure only (run the API with npm)
+#   docker compose up -d --build                        → everything, API in a container on :3000
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: dti
+      POSTGRES_PASSWORD: dti_dev_password
+      POSTGRES_DB: dti_attendance
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dti -d dti_attendance"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Disposable database for integration/e2e tests (data kept in memory).
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: dti
+      POSTGRES_PASSWORD: dti_test_password
+      POSTGRES_DB: dti_attendance_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dti -d dti_attendance_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://dti:dti_dev_password@postgres:5432/dti_attendance?schema=public
+      REDIS_URL: redis://redis:6379
+      # Development-only secrets. Generate real ones for any shared environment (see README).
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-access-secret-change-me-0123456789}
+      DEVICE_JWT_SECRET: ${DEVICE_JWT_SECRET:-dev-only-device-secret-change-me-0123456789}
+      SWAGGER_ENABLED: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@dti.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMe!2026}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

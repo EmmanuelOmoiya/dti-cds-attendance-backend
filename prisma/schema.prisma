@@ -1,0 +1,553 @@
+// DLA CDS Attendance — data model.
+//
+// Some integrity rules cannot be expressed in Prisma's schema language and live as
+// hand-written SQL in prisma/migrations (exclusion constraints on time ranges,
+// CHECK constraints). See docs/DATABASE.md. Never use `prisma db push` against a real
+// database: it would skip those constraints.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Users & auth ─────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  CDS_ADMIN
+  LGI_VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  email        String     @unique // stored lower-cased
+  passwordHash String
+  fullName     String
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?  @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+
+  groupScopes   UserGroupScope[]
+  refreshTokens RefreshToken[]
+}
+
+model UserGroupScope {
+  userId    String   @db.Uuid
+  groupId   String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  user  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group CdsGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  @@id([userId, groupId])
+  @@index([groupId])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique // sha256 of the opaque token
+  familyId   String    @db.Uuid
+  expiresAt  DateTime  @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  replacedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+// ───────────────────────────── CDS groups & schedules ─────────────────────────────
+
+enum GroupStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model CdsGroup {
+  id             String      @id @default(uuid(7)) @db.Uuid
+  name           String
+  nameNormalized String      @unique // lower(trim(name)) — case-insensitive uniqueness
+  description    String?
+  status         GroupStatus @default(ACTIVE)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(3)
+
+  schedules   CdsSchedule[]
+  sessions    AttendanceSession[]
+  memberships GroupMembership[]
+  devices     Device[]
+  userScopes  UserGroupScope[]
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model CdsSchedule {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  groupId        String         @db.Uuid
+  title          String
+  dayOfWeek      Int            @db.SmallInt // ISO: 1 = Monday … 7 = Sunday
+  startLocalTime String         @db.VarChar(5) // "HH:mm" in `timezone`
+  endLocalTime   String         @db.VarChar(5)
+  timezone       String // IANA zone, e.g. Africa/Lagos
+  effectiveFrom  DateTime       @db.Date
+  effectiveUntil DateTime?      @db.Date // inclusive; null = open-ended
+  status         ScheduleStatus @default(ACTIVE)
+  createdById    String?        @db.Uuid
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  group    CdsGroup            @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  sessions AttendanceSession[]
+
+  @@index([groupId, status])
+}
+
+// ───────────────────────────── Sessions ─────────────────────────────
+
+enum SessionOrigin {
+  SCHEDULE
+  AD_HOC
+}
+
+enum SessionStatus {
+  SCHEDULED // expected occurrence; nothing confirmed
+  OPEN // confirmed happening, attendance being taken live
+  CLOSED // confirmed held; counts in reports
+  UNRESOLVED // planned time passed, nobody confirmed or cancelled
+  CANCELLED // an authorized person confirmed it did not happen
+}
+
+enum HeldConfirmation {
+  OPENED_LIVE
+  CONFIRMED_RETROSPECTIVELY
+}
+
+enum CancellationReason {
+  PUBLIC_HOLIDAY
+  OFFICIAL_NYSC_ACTIVITY
+  VENUE_UNAVAILABLE
+  SECURITY
+  WEATHER
+  NOT_HELD
+  SCHEDULE_CHANGED // system-set when an admin ends/deactivates a schedule
+  OTHER
+}
+
+model AttendanceSession {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  groupId            String              @db.Uuid
+  scheduleId         String?             @db.Uuid
+  origin             SessionOrigin
+  title              String
+  occurrenceDate     DateTime            @db.Date // local calendar date in `timezone`
+  timezone           String
+  plannedStart       DateTime            @db.Timestamptz(3)
+  plannedEnd         DateTime            @db.Timestamptz(3)
+  rescheduled        Boolean             @default(false)
+  status             SessionStatus       @default(SCHEDULED)
+  openedAt           DateTime?           @db.Timestamptz(3)
+  closedAt           DateTime?           @db.Timestamptz(3)
+  heldConfirmation   HeldConfirmation?
+  heldConfirmedAt    DateTime?           @db.Timestamptz(3)
+  heldConfirmedById  String?             @db.Uuid
+  cancellationReason CancellationReason?
+  cancellationNote   String?
+  cancelledAt        DateTime?           @db.Timestamptz(3)
+  cancelledById      String?             @db.Uuid
+  unresolvedAt       DateTime?           @db.Timestamptz(3)
+  createdById        String?             @db.Uuid // null when generated by the system
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+
+  group    CdsGroup           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  schedule CdsSchedule?       @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  records  AttendanceRecord[]
+  events   AttendanceEvent[]
+
+  @@unique([scheduleId, occurrenceDate])
+  @@index([groupId, plannedStart])
+  @@index([groupId, occurrenceDate])
+  @@index([status, plannedEnd])
+}
+
+// ───────────────────────────── Members & memberships ─────────────────────────────
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Member {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  fullName      String
+  stateCode     String       @unique // normalized upper-case, e.g. LA/24A/1234
+  status        MemberStatus @default(ACTIVE)
+  deactivatedAt DateTime?    @db.Timestamptz(3)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(3)
+
+  memberships     GroupMembership[]
+  cardAssignments CardAssignment[]
+  records         AttendanceRecord[]
+  events          AttendanceEvent[]
+}
+
+enum MembershipEndReason {
+  TRANSFERRED
+  SERVICE_COMPLETED
+  REMOVED
+  MEMBER_DEACTIVATED
+  DATA_CORRECTION
+  OTHER
+}
+
+// Validity is the half-open interval [joinedAt, leftAt).
+// Eligible for a session  ⇔  joinedAt <= session.plannedStart AND (leftAt IS NULL OR leftAt > session.plannedStart)
+// Exclusion constraint (SQL migration): a member's memberships never overlap.
+model GroupMembership {
+  id                        String               @id @default(uuid(7)) @db.Uuid
+  memberId                  String               @db.Uuid
+  groupId                   String               @db.Uuid
+  joinedAt                  DateTime             @db.Timestamptz(3)
+  leftAt                    DateTime?            @db.Timestamptz(3)
+  endReason                 MembershipEndReason?
+  endNote                   String?
+  transferredToMembershipId String?              @unique @db.Uuid
+  createdById               String?              @db.Uuid
+  endedById                 String?              @db.Uuid
+  createdAt                 DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime             @updatedAt @db.Timestamptz(3)
+
+  member          Member             @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  group           CdsGroup           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  transferredTo   GroupMembership?   @relation("MembershipTransfer", fields: [transferredToMembershipId], references: [id], onDelete: Restrict)
+  transferredFrom GroupMembership?   @relation("MembershipTransfer")
+  records         AttendanceRecord[]
+
+  @@index([memberId, joinedAt])
+  @@index([groupId, joinedAt])
+}
+
+// ───────────────────────────── Cards & assignments ─────────────────────────────
+
+enum CardStatus {
+  UNASSIGNED // in shared stock, can be assigned
+  ASSIGNED // has exactly one ACTIVE assignment
+  REVOKED // lost / damaged / stolen / retired — cannot be assigned until reinstated
+}
+
+enum CardRevokeReason {
+  LOST
+  DAMAGED
+  STOLEN
+  RETIRED
+  OTHER
+}
+
+model Card {
+  id           String            @id @default(uuid(7)) @db.Uuid
+  cardUid      String            @unique // normalized upper-case hex, no separators
+  label        String? // optional printed serial
+  status       CardStatus        @default(UNASSIGNED)
+  revokedAt    DateTime?         @db.Timestamptz(3)
+  revokeReason CardRevokeReason?
+  revokeNote   String?
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
+
+  assignments CardAssignment[]
+  events      AttendanceEvent[]
+}
+
+enum CardAssignmentStatus {
+  ACTIVE
+  ENDED
+}
+
+enum AssignmentEndReason {
+  REPLACED
+  RETURNED
+  LOST
+  DAMAGED
+  STOLEN
+  MEMBER_LEFT
+  REVOKED
+  OTHER
+}
+
+// Validity is the half-open interval [assignedAt, endedAt).
+// Exclusion constraints (SQL migration): no overlap per card, no overlap per member.
+model CardAssignment {
+  id                     String               @id @default(uuid(7)) @db.Uuid
+  cardId                 String               @db.Uuid
+  memberId               String               @db.Uuid
+  assignedAt             DateTime             @db.Timestamptz(3)
+  endedAt                DateTime?            @db.Timestamptz(3)
+  status                 CardAssignmentStatus @default(ACTIVE)
+  endReason              AssignmentEndReason?
+  endNote                String?
+  replacedByAssignmentId String?              @unique @db.Uuid
+  assignedById           String?              @db.Uuid
+  endedById              String?              @db.Uuid
+  createdAt              DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime             @updatedAt @db.Timestamptz(3)
+
+  card         Card               @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  member       Member             @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  replacedBy   CardAssignment?    @relation("AssignmentReplacement", fields: [replacedByAssignmentId], references: [id], onDelete: Restrict)
+  replacementOf CardAssignment?   @relation("AssignmentReplacement")
+  records      AttendanceRecord[]
+  events       AttendanceEvent[]
+
+  @@index([cardId, assignedAt])
+  @@index([memberId, assignedAt])
+}
+
+// ───────────────────────────── Devices & sync ─────────────────────────────
+
+enum DeviceStatus {
+  PENDING // registered, credential issued, not yet allowed to sync
+  ACTIVE
+  SUSPENDED // temporarily blocked (reversible)
+  REVOKED // compromised / stolen (terminal except decommission)
+  DECOMMISSIONED // retired (terminal)
+}
+
+model Device {
+  id                  String       @id @default(uuid(7)) @db.Uuid
+  deviceIdentifier    String       @unique // public, printed on the device; NOT a credential
+  name                String
+  assignedGroupId     String       @db.Uuid
+  status              DeviceStatus @default(PENDING)
+  statusReason        String?
+  secretHash          String // sha256 of a 256-bit random secret
+  credentialVersion   Int          @default(1)
+  credentialRotatedAt DateTime     @default(now()) @db.Timestamptz(3)
+  activatedAt         DateTime?    @db.Timestamptz(3)
+  suspendedAt         DateTime?    @db.Timestamptz(3)
+  revokedAt           DateTime?    @db.Timestamptz(3)
+  decommissionedAt    DateTime?    @db.Timestamptz(3)
+  lastSeenAt          DateTime?    @db.Timestamptz(3)
+  lastSyncAt          DateTime?    @db.Timestamptz(3)
+  lastStatus          Json?
+  createdById         String?      @db.Uuid
+  createdAt           DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
+
+  group      CdsGroup           @relation(fields: [assignedGroupId], references: [id], onDelete: Restrict)
+  events     AttendanceEvent[]
+  records    AttendanceRecord[]
+  syncEvents SyncEvent[]
+
+  @@index([assignedGroupId])
+}
+
+enum SyncEventType {
+  TOKEN
+  SNAPSHOT
+  UPLOAD
+  HEARTBEAT
+}
+
+enum SyncResult {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model SyncEvent {
+  id                     String        @id @default(uuid(7)) @db.Uuid
+  deviceId               String        @db.Uuid
+  type                   SyncEventType
+  result                 SyncResult
+  batchId                String?
+  itemsReceived          Int           @default(0)
+  itemsAccepted          Int           @default(0)
+  itemsAlreadyRecorded   Int           @default(0)
+  itemsRejected          Int           @default(0)
+  itemsRetry             Int           @default(0)
+  deviceTime             DateTime?     @db.Timestamptz(3)
+  clockSkewMs            Int?
+  durationMs             Int?
+  errorCode              String?
+  metadata               Json?
+  createdAt              DateTime      @default(now()) @db.Timestamptz(3)
+
+  device Device            @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  events AttendanceEvent[]
+
+  @@index([deviceId, createdAt(sort: Desc)])
+}
+
+// ───────────────────────────── Attendance ─────────────────────────────
+
+enum EventAckStatus {
+  ACCEPTED
+  ALREADY_RECORDED
+  REJECTED
+}
+
+enum RejectReason {
+  INVALID_TIMESTAMP
+  UNKNOWN_CARD
+  CARD_NOT_ASSIGNED
+  CARD_REVOKED
+  MEMBER_INACTIVE
+  NO_MATCHING_SESSION
+  SESSION_CANCELLED
+  SESSION_NOT_OPEN
+  DEVICE_NOT_AUTHORIZED
+  MEMBER_NOT_IN_GROUP
+  NOT_ELIGIBLE_FOR_SESSION
+  DUPLICATE_EVENT
+  OTHER
+}
+
+enum EventResolution {
+  NONE
+  RECORD_CREATED
+  DISMISSED
+}
+
+// The raw tap as uploaded by a device. Append-only; the ack* fields are what the
+// device was told and never change (so retries always get the same answer).
+// resolution* fields record later admin follow-up of rejected events.
+model AttendanceEvent {
+  id                 String          @id @default(uuid(7)) @db.Uuid
+  deviceId           String          @db.Uuid
+  clientEventId      String
+  payloadHash        String
+  cardUid            String
+  claimedSessionId   String?         @db.Uuid
+  sessionId          String?         @db.Uuid
+  cardId             String?         @db.Uuid
+  cardAssignmentId   String?         @db.Uuid
+  memberId           String?         @db.Uuid
+  capturedAt         DateTime        @db.Timestamptz(3)
+  receivedAt         DateTime        @default(now()) @db.Timestamptz(3)
+  clockSkewMs        Int?
+  sessionReassigned  Boolean         @default(false)
+  ackStatus          EventAckStatus
+  ackReason          RejectReason?
+  attendanceRecordId String?         @db.Uuid
+  resolution         EventResolution @default(NONE)
+  resolutionNote     String?
+  resolvedAt         DateTime?       @db.Timestamptz(3)
+  resolvedById       String?         @db.Uuid
+  syncEventId        String?         @db.Uuid
+
+  device         Device             @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  session        AttendanceSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  card           Card?              @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  cardAssignment CardAssignment?    @relation(fields: [cardAssignmentId], references: [id], onDelete: Restrict)
+  member         Member?            @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  record         AttendanceRecord?  @relation("EventRecord", fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  syncEvent      SyncEvent?         @relation(fields: [syncEventId], references: [id], onDelete: Restrict)
+  producedRecord AttendanceRecord?  @relation("RecordSourceEvent")
+
+  @@unique([deviceId, clientEventId])
+  @@index([deviceId, receivedAt(sort: Desc)])
+  @@index([ackStatus, resolution, sessionId])
+  @@index([sessionId])
+  @@index([memberId])
+}
+
+enum AttendanceSource {
+  DEVICE
+  MANUAL
+  REPROCESSED
+}
+
+enum AttendanceRecordStatus {
+  PRESENT
+  VOIDED
+}
+
+enum VoidReason {
+  SESSION_CANCELLED
+  ADMIN_CORRECTION
+}
+
+// The official attendance fact: member M was present at session S.
+model AttendanceRecord {
+  id               String                 @id @default(uuid(7)) @db.Uuid
+  sessionId        String                 @db.Uuid
+  memberId         String                 @db.Uuid
+  membershipId     String                 @db.Uuid
+  cardAssignmentId String?                @db.Uuid
+  deviceId         String?                @db.Uuid
+  sourceEventId    String?                @unique @db.Uuid
+  source           AttendanceSource
+  capturedAt       DateTime               @db.Timestamptz(3)
+  receivedAt       DateTime               @default(now()) @db.Timestamptz(3)
+  lateSync         Boolean                @default(false)
+  status           AttendanceRecordStatus @default(PRESENT)
+  note             String?
+  voidReason       VoidReason?
+  voidNote         String?
+  voidedAt         DateTime?              @db.Timestamptz(3)
+  voidedById       String?                @db.Uuid
+  createdById      String?                @db.Uuid
+  createdAt        DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @db.Timestamptz(3)
+
+  session        AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  member         Member            @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  membership     GroupMembership   @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+  cardAssignment CardAssignment?   @relation(fields: [cardAssignmentId], references: [id], onDelete: Restrict)
+  device         Device?           @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  sourceEvent    AttendanceEvent?  @relation("RecordSourceEvent", fields: [sourceEventId], references: [id], onDelete: Restrict)
+  linkedEvents   AttendanceEvent[] @relation("EventRecord")
+
+  @@unique([sessionId, memberId])
+  @@index([sessionId, status])
+  @@index([memberId, capturedAt(sort: Desc)])
+  @@index([deviceId])
+}
+
+// ───────────────────────────── Audit ─────────────────────────────
+
+enum ActorType {
+  USER
+  DEVICE
+  SYSTEM
+  ANONYMOUS
+}
+
+model AuditLog {
+  id         BigInt    @id @default(autoincrement())
+  actorType  ActorType
+  actorId    String?   @db.Uuid
+  action     String
+  entityType String
+  entityId   String?
+  groupId    String?   @db.Uuid // for scoping audit visibility to CDS admins
+  metadata   Json?
+  requestId  String?
+  ip         String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([groupId, createdAt])
+  @@index([createdAt])
+  @@index([action, createdAt])
+}
