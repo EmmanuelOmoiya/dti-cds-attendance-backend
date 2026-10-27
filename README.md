@@ -1,6 +1,6 @@
-# DLA CDS Attendance — Backend
+# DTI CDS Attendance - Backend
 
-Offline-first NFC attendance backend for Digital Literacy 4 All (DLA) CDS groups.
+Offline-first NFC attendance backend for Digital Literacy 4 All (DTI) CDS groups.
 
 NFC readers record taps locally while offline. When connectivity returns, they synchronise in
 batches. The backend is the source of truth for groups, recurring schedules, sessions,
@@ -51,12 +51,12 @@ npm run db:seed                 # set SEED_DEMO_DATA=true in .env for a demo gro
 npm run start:dev               # http://localhost:3000/api/v1/health · docs at http://localhost:3000/api/docs
 ```
 
-Log in with the seeded admin (`admin@dla.local` / `ChangeMe!2026` by default; change these in `.env`):
+Log in with the seeded admin (`admin@dti.local` / `ChangeMe!2026` by default; change these in `.env`):
 
 ```bash
 curl -s -X POST localhost:3000/api/v1/auth/login \
   -H 'content-type: application/json' \
-  -d '{"email":"admin@dla.local","password":"ChangeMe!2026"}'
+  -d '{"email":"admin@dti.local","password":"ChangeMe!2026"}'
 ```
 
 Use the returned `accessToken` as `Authorization: Bearer <token>`. In Swagger UI, click **Authorize**.
@@ -119,7 +119,7 @@ Every variable is validated at startup ([src/config/app-config.ts](src/config/ap
 | `CAPTURE_FUTURE_TOLERANCE_SECONDS` | 300 | Allowed device clock drift into the future |
 | `CAPTURE_MIN_DATE` | 2024-01-01 | Taps stamped before this are treated as a reset clock |
 | `THROTTLE_*_PER_MINUTE` | 300 / 10 / 20 / 120 | Rate limits: default / login / device token / sync |
-| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | admin@dla.local / — | First SUPER_ADMIN (seed only) |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | admin@dti.local / — | First SUPER_ADMIN (seed only) |
 | `SEED_DEMO_DATA` | false | Seed a demo group, schedule, members, cards and device |
 
 Generate secrets with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`.
