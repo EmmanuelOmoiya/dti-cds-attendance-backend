@@ -27,12 +27,12 @@ immediately, including for tokens already issued.
 
 ```http
 POST /api/v1/sync/token
-{ "deviceIdentifier": "DLA-DEV-0001", "secret": "dsk_…" }
+{ "deviceIdentifier": "DTI-DEV-0001", "secret": "dsk_…" }
 ```
 ```json
 200 { "data": { "accessToken": "eyJ…", "tokenType": "Bearer", "expiresIn": 3600,
                 "serverTime": "2026-11-13T08:00:00.000Z",
-                "device": { "id": "…", "deviceIdentifier": "DLA-DEV-0001", "name": "Main reader", "groupId": "…" } } }
+                "device": { "id": "…", "deviceIdentifier": "DTI-DEV-0001", "name": "Main reader", "groupId": "…" } } }
 ```
 
 | Response | Meaning | Device action |
@@ -57,8 +57,8 @@ Everything needed to operate offline for the next `SYNC_LOOKAHEAD_DAYS` (14):
   "data": {
     "snapshotVersion": "9f2c0e…",
     "serverTime": "2026-11-13T08:00:00.000Z",
-    "device": { "id": "…", "deviceIdentifier": "DLA-DEV-0001", "name": "Main reader", "status": "ACTIVE" },
-    "group":  { "id": "…", "name": "DLA CDS Ikeja", "status": "ACTIVE" },
+    "device": { "id": "…", "deviceIdentifier": "DTI-DEV-0001", "name": "Main reader", "status": "ACTIVE" },
+    "group":  { "id": "…", "name": "DTI CDS Ikeja", "status": "ACTIVE" },
     "config": { "maxBatchSize": 200, "recommendedSyncIntervalSec": 300,
                 "sessionEarlyGraceMinutes": 60, "sessionCloseGraceMinutes": 30, "captureFutureToleranceSeconds": 300 },
     "roster": [

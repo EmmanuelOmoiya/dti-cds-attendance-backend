@@ -176,11 +176,11 @@ Copy-paste walkthrough with `curl` and `jq` (bash). It assumes the API is runnin
 ```bash
 API=http://localhost:3000/api/v1
 TOKEN=$(curl -s -X POST $API/auth/login -H 'content-type: application/json' \
-  -d '{"email":"admin@dla.local","password":"ChangeMe!2026"}' | jq -r .data.accessToken)
+  -d '{"email":"admin@dti.local","password":"ChangeMe!2026"}' | jq -r .data.accessToken)
 H=(-H "Authorization: Bearer $TOKEN" -H 'content-type: application/json')
 
 # 1. Group + weekly schedule (Fridays 10:00–13:00 Lagos); sessions are generated 6 weeks ahead
-GROUP=$(curl -s "${H[@]}" -X POST $API/groups -d '{"name":"DLA CDS Ikeja"}' | jq -r .data.id)
+GROUP=$(curl -s "${H[@]}" -X POST $API/groups -d '{"name":"DTI CDS Mowe Sub-Office"}' | jq -r .data.id)
 curl -s "${H[@]}" -X POST $API/schedules -d "{\"groupId\":\"$GROUP\",\"title\":\"Weekly CDS\",\"dayOfWeek\":5,\"startLocalTime\":\"10:00\",\"endLocalTime\":\"13:00\",\"effectiveFrom\":\"$(date +%F)\"}" | jq .data.generation
 
 # 2. Member (joined 30 days ago) + card
@@ -192,10 +192,10 @@ SESSION=$(curl -s "${H[@]}" -X POST $API/sessions -d "{\"groupId\":\"$GROUP\",\"
 curl -s "${H[@]}" -X POST $API/sessions/$SESSION/open | jq .data.status
 
 # 4. Device: register (secret shown once), activate, authenticate
-REG=$(curl -s "${H[@]}" -X POST $API/devices -d "{\"deviceIdentifier\":\"DLA-DEV-0001\",\"name\":\"Main reader\",\"assignedGroupId\":\"$GROUP\"}")
+REG=$(curl -s "${H[@]}" -X POST $API/devices -d "{\"deviceIdentifier\":\"DTI-DEV-0001\",\"name\":\"Main reader\",\"assignedGroupId\":\"$GROUP\"}")
 DEVICE=$(echo $REG | jq -r .data.device.id); SECRET=$(echo $REG | jq -r .data.credentials.secret)
 curl -s "${H[@]}" -X POST $API/devices/$DEVICE/activate | jq .data.status
-DTOKEN=$(curl -s -X POST $API/sync/token -H 'content-type: application/json' -d "{\"deviceIdentifier\":\"DLA-DEV-0001\",\"secret\":\"$SECRET\"}" | jq -r .data.accessToken)
+DTOKEN=$(curl -s -X POST $API/sync/token -H 'content-type: application/json' -d "{\"deviceIdentifier\":\"DTI-DEV-0001\",\"secret\":\"$SECRET\"}" | jq -r .data.accessToken)
 
 # 5. Upload a tap — twice (the second is an idempotent replay)
 BODY="{\"batchId\":\"b1\",\"events\":[{\"clientEventId\":\"ATT-123\",\"cardUid\":\"04A1B2C3D4E5F6\",\"capturedAt\":\"$(date -u -d '-5 min' +%FT%TZ)\",\"sessionId\":\"$SESSION\"}]}"
